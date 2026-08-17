@@ -596,16 +596,51 @@ function appendSyncLog_(username,data){
   sh.appendRow([new Date(),txt_(username||''),(data.entries||[]).length,(data.salesInvoices||[]).length,(data.purchaseInvoices||[]).length,(data.payments||[]).length,(data.stockMovements||[]).length,(data.productionOrders||[]).length,(data.payrollSlips||[]).length,(data.assets||[]).length,(data.depreciationRuns||[]).length]);
 }
 
-function getState_(body){
-  var u=userByToken_(body&&body.token);
-  if(!u) return out_({status:'unauthorized'});
-  return out_({status:'ok',user:u,data:filteredState_(readState_(),u)});
+ffunction userByToken_(token) {
+  if (!token) return null;
+  
+  // 1. البحث عن التوكن في شيت الجلسات والتأكد من عدم انتهاء صلاحيته
+  var sessSh = sheet_(SESSIONS_SHEET, ['token', 'username', 'expiresAt']);
+  var sessVals = sessSh.getDataRange().getValues();
+  var username = '';
+  
+  for (var i = 1; i < sessVals.length; i++) {
+    if (String(sessVals[i][0]) === String(token)) {
+      if (new Date(sessVals[i][2]) < new Date()) {
+        return null; // انتهت الجلسة
+      }
+      username = String(sessVals[i][1]).toLowerCase();
+      break;
+    }
+  }
+  
+  if (!username) return null; // التوكن غير موجود
+
+  // 2. التحقق من أن المستخدم ما زال موجوداً ونشطاً في شيت المستخدمين
+  var userSh = sheet_(USERS_SHEET, ['id','name','username','passwordHash','role','allowedTabs','active','permsJson','isOwner']);
+  var userVals = userSh.getDataRange().getValues();
+  
+  for (var j = 1; j < userVals.length; j++) {
+    // التأكد من اسم المستخدم وأنه نشط (active === '1')
+    if (String(userVals[j][2]).toLowerCase() === username && String(userVals[j][6]) === '1') {
+      var perms = {}; 
+      try { perms = JSON.parse(userVals[j][7] || '{}'); } catch(e) {}
+      
+      return {
+        id: userVals[j][0],
+        name: userVals[j][1],
+        username: userVals[j][2],
+        role: userVals[j][4],
+        allowedTabs: JSON.parse(userVals[j][5] || '[]'),
+        perms: perms,
+        isOwner: String(userVals[j][8]) === '1'
+      };
+    }
+  }
+  
+  // إذا حُذف المستخدم من شيت Users أو تم إيقافه (active !== '1')
+  return null; 
 }
-function saveState_(body){
-  var u=userByToken_(body&&body.token);
-  if(!u) return out_({status:'unauthorized'});
-  var incoming=body&&body.data;
-  if(!incoming) return out_({status:'error',message:'لا توجد بيانات'});
 
   var full=readState_();
   Object.keys(incoming).forEach(function(k){
